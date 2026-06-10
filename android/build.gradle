@@ -1,0 +1,83 @@
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.buildDir = "../build"
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}
+
+subprojects {
+    def configureNamespace = { p ->
+        if (p.hasProperty('android')) {
+            if (p.android.namespace == null) {
+                File manifestFile = p.file("${p.projectDir}/src/main/AndroidManifest.xml")
+                if (manifestFile.exists()) {
+                    def manifestContent = manifestFile.getText('UTF-8')
+                    def matcher = manifestContent =~ /package="([^"]+)"/
+                    if (matcher.find()) {
+                        p.android.namespace = matcher.group(1)
+                    }
+                }
+                if (p.android.namespace == null) {
+                    p.android.namespace = p.group.toString().isEmpty()
+                        ? "com.example.${p.name.replaceAll('-', '_')}"
+                        : "${p.group}.${p.name.replaceAll('-', '_')}"
+                }
+            }
+
+            // Configure Java compiler tasks to JVM 17
+            p.tasks.withType(JavaCompile) {
+                sourceCompatibility = '17'
+                targetCompatibility = '17'
+            }
+
+            // Configure Kotlin compiler tasks dynamically to JVM 17
+            p.tasks.configureEach { task ->
+                if (task.class.name.contains("KotlinCompile")) {
+                    try {
+                        task.kotlinOptions {
+                            jvmTarget = "17"
+                        }
+                    } catch (Exception e) {
+                        // ignore if not configurable
+                    }
+                }
+            }
+
+            p.tasks.whenTaskAdded { task ->
+                if (task.name.contains('processDebugManifest') || task.name.contains('processReleaseManifest')) {
+                    task.doFirst {
+                        File manifestFile = p.file("${p.projectDir}/src/main/AndroidManifest.xml")
+                        if (manifestFile.exists()) {
+                            String content = manifestFile.getText('UTF-8')
+                            if (content.contains('package=')) {
+                                content = content.replaceAll(/package="[^"]+"/, '')
+                                manifestFile.setText(content, 'UTF-8')
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (project.state.executed) {
+        configureNamespace(project)
+    } else {
+        project.afterEvaluate { configureNamespace(project) }
+    }
+}
+
+
+
